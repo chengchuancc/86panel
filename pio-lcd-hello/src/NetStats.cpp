@@ -3,14 +3,11 @@
 #include "AppConfig.h"
 
 #include <ArduinoJson.h>
-#include <HTTPClient.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
 
 IPAddress statsTargetHost()
 {
-  IPAddress gateway = WiFi.gatewayIP();
-  if (USE_GATEWAY_FOR_STATS && gateway != IPAddress(0, 0, 0, 0)) return gateway;
   return STATS_HOST;
 }
 
@@ -19,24 +16,9 @@ String statsTargetUrl()
   return String("http://") + statsTargetHost().toString() + ":" + STATS_PORT + STATS_PATH;
 }
 
-static String compactSnippet(const String &text)
+String networkProbeSummary()
 {
-  String out = text;
-  out.replace("\r", " ");
-  out.replace("\n", " ");
-  out.trim();
-  if (out.length() > 36) out = out.substring(0, 36);
-  return out;
-}
-
-static bool extractJsonBody(String &text)
-{
-  int object_start = text.indexOf('{');
-  int object_end = text.lastIndexOf('}');
-  if (object_start < 0 || object_end <= object_start) return false;
-  text = text.substring(object_start, object_end + 1);
-  text.trim();
-  return true;
+  return String("Target ") + statsTargetUrl();
 }
 
 static bool readHttpBody(WiFiClient &client, int &status_code, String &body, String &status_line)
@@ -78,13 +60,6 @@ static bool parseStatsPayload(const String &raw_payload, Stats &stats)
     return false;
   }
 
-  if (!extractJsonBody(payload)) {
-    Serial.println("No JSON object in response:");
-    Serial.println(payload);
-    stats.error = "NO JSON " + compactSnippet(payload);
-    return false;
-  }
-
   JsonDocument doc;
   DeserializationError error = deserializeJson(doc, payload);
 
@@ -113,80 +88,6 @@ static bool parseStatsPayload(const String &raw_payload, Stats &stats)
   return true;
 }
 
-static bool fetchStatsWithHttpClient(Stats &stats)
-{
-  WiFiClient client;
-  HTTPClient http;
-  String url = statsTargetUrl();
-
-  http.setTimeout(STATS_HTTP_TIMEOUT_MS);
-  http.setReuse(false);
-  http.setUserAgent("ESP32Panel/1.0");
-
-  if (!http.begin(client, url)) {
-    stats.error = "HTTP BEGIN";
-    return false;
-  }
-
-  int http_code = http.GET();
-  if (http_code != HTTP_CODE_OK) {
-    stats.error = "HTTPC " + String(http_code);
-    Serial.printf("HTTPClient failed: code=%d url=%s local=%s gateway=%s rssi=%d\n",
-                  http_code,
-                  url.c_str(),
-                  WiFi.localIP().toString().c_str(),
-                  WiFi.gatewayIP().toString().c_str(),
-                  WiFi.RSSI());
-    http.end();
-    return false;
-  }
-
-  String payload = http.getString();
-  http.end();
-  return parseStatsPayload(payload, stats);
-}
-
-static bool fetchStatsWithRawClient(Stats &stats)
-{
-  IPAddress host = statsTargetHost();
-  WiFiClient client;
-  client.setTimeout(STATS_HTTP_TIMEOUT_MS);
-
-  if (!client.connect(host, STATS_PORT, STATS_HTTP_TIMEOUT_MS)) {
-    stats.error = "TCP FAIL";
-    Serial.printf("Stats TCP failed: local=%s gateway=%s target=%s:%u rssi=%d\n",
-                  WiFi.localIP().toString().c_str(),
-                  WiFi.gatewayIP().toString().c_str(),
-                  host.toString().c_str(),
-                  STATS_PORT,
-                  WiFi.RSSI());
-    return false;
-  }
-
-  client.print("GET ");
-  client.print(STATS_PATH);
-  client.print(" HTTP/1.1\r\nHost: ");
-  client.print(host);
-  client.print("\r\nAccept: application/json\r\nUser-Agent: ESP32Panel/1.0\r\nConnection: close\r\n\r\n");
-
-  int http_code = 0;
-  String payload;
-  String status_line;
-  if (!readHttpBody(client, http_code, payload, status_line)) {
-    stats.error = "BAD " + compactSnippet(status_line);
-    client.stop();
-    return false;
-  }
-  client.stop();
-
-  if (http_code != 200) {
-    stats.error = "RAW " + String(http_code);
-    return false;
-  }
-
-  return parseStatsPayload(payload, stats);
-}
-
 bool fetchStats(Stats &stats)
 {
   if (WiFi.status() != WL_CONNECTED) {
@@ -194,11 +95,43 @@ bool fetchStats(Stats &stats)
     return false;
   }
 
-  String http_client_error;
-  if (fetchStatsWithHttpClient(stats)) return true;
-  http_client_error = stats.error;
+  IPAddress host = statsTargetHost();
+  WiFiClient client;
+  client.setTimeout(STATS_HTTP_TIMEOUT_MS);
 
-  if (fetchStatsWithRawClient(stats)) return true;
-  stats.error = http_client_error + " / " + stats.error;
-  return false;
+  if (!client.connect(host, STATS_PORT, STATS_HTTP_TIMEOUT_MS)) {
+    stats.error = "CONN FAIL";
+    Serial.printf("Stats connect failed: local=%s gateway=%s target=%s:%u bssid=%s ch=%d rssi=%d\n",
+                  WiFi.localIP().toString().c_str(),
+                  WiFi.gatewayIP().toString().c_str(),
+                  host.toString().c_str(),
+                  STATS_PORT,
+                  WiFi.BSSIDstr().c_str(),
+                  WiFi.channel(),
+                  WiFi.RSSI());
+    return false;
+  }
+
+  client.print("GET ");
+  client.print(STATS_PATH);
+  client.print(" HTTP/1.0\r\nHost: ");
+  client.print(host);
+  client.print("\r\nUser-Agent: ESP32Panel/1.0\r\nConnection: close\r\n\r\n");
+
+  int http_code = 0;
+  String payload;
+  String status_line;
+  if (!readHttpBody(client, http_code, payload, status_line)) {
+    stats.error = "BAD HTTP";
+    client.stop();
+    return false;
+  }
+  client.stop();
+
+  if (http_code != 200) {
+    stats.error = "HTTP " + String(http_code);
+    return false;
+  }
+
+  return parseStatsPayload(payload, stats);
 }

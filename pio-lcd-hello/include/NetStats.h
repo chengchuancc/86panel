@@ -22,4 +22,5 @@ struct Stats {
 
 IPAddress statsTargetHost();
 String statsTargetUrl();
+String networkProbeSummary();
 bool fetchStats(Stats &stats);

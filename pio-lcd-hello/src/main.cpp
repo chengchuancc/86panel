@@ -97,7 +97,11 @@ void loop()
   if (now - last_stats_ms > STATS_REFRESH_MS) {
     last_stats_ms = now;
     bool ok = fetchStats(stats);
-    if (!ok && now - stats.last_ok_ms > 3000) {
+    if (!ok && stats.last_ok_ms == 0) {
+      stats.online = false;
+    } else if (!ok && WiFi.status() != WL_CONNECTED && now - stats.last_ok_ms > 3000) {
+      stats.online = false;
+    } else if (!ok && now - stats.last_ok_ms > 30000) {
       stats.online = false;
     }
     DashboardUi::updateStats(stats);

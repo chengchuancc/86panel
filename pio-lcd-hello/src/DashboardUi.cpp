@@ -227,12 +227,11 @@ static String formatSpeedCompact(float kbps)
 static void pushHistory(float *history, float value)
 {
   if (value < 0.0f) value = 0.0f;
-  if (value > CHART_MAX_KBPS) value = CHART_MAX_KBPS;
   for (uint16_t i = 0; i < CHART_POINTS - 1; i++) history[i] = history[i + 1];
   history[CHART_POINTS - 1] = value;
 }
 
-static int autoChartMax(const float *rx_history, const float *tx_history)
+static float autoChartMax(const float *rx_history, const float *tx_history)
 {
   float peak = 0.0f;
   for (uint16_t i = 0; i < CHART_POINTS; i++) {
@@ -240,21 +239,33 @@ static int autoChartMax(const float *rx_history, const float *tx_history)
     if (tx_history[i] > peak) peak = tx_history[i];
   }
   if (peak < 500.0f) return 500;
-  if (peak > CHART_MAX_KBPS) return CHART_MAX_KBPS;
-  return (int)(peak + 0.999f);
+  return peak;
 }
 
-static int chartValue(float kbps)
+static int chartValue(float kbps, float chart_max)
 {
   if (kbps < 0) kbps = 0;
-  if (kbps > CHART_MAX_KBPS) kbps = CHART_MAX_KBPS;
-  return (int)kbps;
+  if (chart_max < 1.0f) chart_max = 1.0f;
+  int value = (int)((kbps * 1000.0f / chart_max) + 0.5f);
+  if (value < 0) value = 0;
+  if (value > 1000) value = 1000;
+  return value;
 }
 
-static void updateChartScale(lv_obj_t *chart, lv_obj_t *scale_label, int chart_max)
+static void updateChartScale(lv_obj_t *chart, lv_obj_t *scale_label, float chart_max)
 {
-  lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, 0, chart_max);
+  lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, 0, 1000);
   lv_label_set_text_fmt(scale_label, "%s", formatSpeedCompact(chart_max).c_str());
+}
+
+static void redrawChart(lv_obj_t *chart, lv_chart_series_t *rx_series, lv_chart_series_t *tx_series,
+                        const float *rx_history, const float *tx_history, float chart_max)
+{
+  for (uint16_t i = 0; i < CHART_POINTS; i++) {
+    lv_chart_set_value_by_id(chart, rx_series, i, chartValue(rx_history[i], chart_max));
+    lv_chart_set_value_by_id(chart, tx_series, i, chartValue(tx_history[i], chart_max));
+  }
+  lv_chart_refresh(chart);
 }
 
 static lv_obj_t *makeLabel(lv_obj_t *parent, const char *text, lv_color_t color, const lv_font_t *font)
@@ -285,7 +296,7 @@ static lv_obj_t *makeLineChart(lv_obj_t *parent, lv_color_t rx_color, lv_color_t
   lv_obj_set_size(obj, 320, 108);
   lv_chart_set_type(obj, LV_CHART_TYPE_LINE);
   lv_chart_set_point_count(obj, CHART_POINTS);
-  lv_chart_set_range(obj, LV_CHART_AXIS_PRIMARY_Y, 0, CHART_MAX_KBPS);
+  lv_chart_set_range(obj, LV_CHART_AXIS_PRIMARY_Y, 0, 1000);
   lv_chart_set_update_mode(obj, LV_CHART_UPDATE_MODE_SHIFT);
   lv_chart_set_div_line_count(obj, 3, 5);
   lv_obj_set_style_bg_color(obj, theme->chart_bg, 0);
@@ -519,12 +530,12 @@ void DashboardUi::updateConnectionView(const Stats &stats, uint32_t reconnect_co
 {
   wl_status_t wifi_status = WiFi.status();
   if (wifi_status == WL_CONNECTED) {
-    lv_label_set_text_fmt(connect_wifi_label, "WiFi: %s   RSSI %d dBm",
-                          wifiStatusText(wifi_status), WiFi.RSSI());
+    lv_label_set_text_fmt(connect_wifi_label, "WiFi: %s   CH %d   %d dBm",
+                          wifiStatusText(wifi_status), WiFi.channel(), WiFi.RSSI());
     lv_label_set_text_fmt(connect_ip_label, "IP: %s   MAC %s",
                           WiFi.localIP().toString().c_str(), WiFi.macAddress().c_str());
-    lv_label_set_text_fmt(connect_route_label, "Gateway: %s   DNS %s",
-                          WiFi.gatewayIP().toString().c_str(), WiFi.dnsIP().toString().c_str());
+    lv_label_set_text_fmt(connect_route_label, "Gateway: %s   BSSID %s",
+                          WiFi.gatewayIP().toString().c_str(), WiFi.BSSIDstr().c_str());
     lv_label_set_text_fmt(connect_target_label, "Stats: %s", statsTargetUrl().c_str());
   } else {
     lv_label_set_text_fmt(connect_wifi_label, "WiFi: %s   SSID %s",
@@ -538,7 +549,7 @@ void DashboardUi::updateConnectionView(const Stats &stats, uint32_t reconnect_co
     lv_label_set_text(connect_error_label, "Stats link OK");
     lv_obj_set_style_text_color(connect_error_label, theme->ok, 0);
   } else if (wifi_status == WL_CONNECTED) {
-    lv_label_set_text_fmt(connect_error_label, "Router stats: %s", stats.error.c_str());
+    lv_label_set_text_fmt(connect_error_label, "%s", stats.error.c_str());
     lv_obj_set_style_text_color(connect_error_label, theme->red, 0);
   } else {
     lv_label_set_text(connect_error_label, "Connecting WiFi...");
@@ -569,15 +580,12 @@ void DashboardUi::updateStats(const Stats &stats)
                         formatSpeedCompact(stats.eth1_rx).c_str(),
                         formatSpeedCompact(stats.eth1_tx).c_str());
 
-  int eth0_max = autoChartMax(eth0_rx_window, eth0_tx_window);
-  int eth1_max = autoChartMax(eth1_rx_window, eth1_tx_window);
+  float eth0_max = autoChartMax(eth0_rx_window, eth0_tx_window);
+  float eth1_max = autoChartMax(eth1_rx_window, eth1_tx_window);
   updateChartScale(eth0_chart, eth0_scale_label, eth0_max);
   updateChartScale(eth1_chart, eth1_scale_label, eth1_max);
-
-  lv_chart_set_next_value(eth0_chart, eth0_rx_series, chartValue(stats.eth0_rx));
-  lv_chart_set_next_value(eth0_chart, eth0_tx_series, chartValue(stats.eth0_tx));
-  lv_chart_set_next_value(eth1_chart, eth1_rx_series, chartValue(stats.eth1_rx));
-  lv_chart_set_next_value(eth1_chart, eth1_tx_series, chartValue(stats.eth1_tx));
+  redrawChart(eth0_chart, eth0_rx_series, eth0_tx_series, eth0_rx_window, eth0_tx_window, eth0_max);
+  redrawChart(eth1_chart, eth1_rx_series, eth1_tx_series, eth1_rx_window, eth1_tx_window, eth1_max);
 
   for (int i = 0; i < 4; i++) {
     lv_label_set_text_fmt(core_label[i], "C%d\n%d%%", i, stats.cores[i]);
