@@ -19,7 +19,8 @@ static Arduino_ESP32RGBPanel *rgbpanel = new Arduino_ESP32RGBPanel(
     14, 13, 12, 11, 10, 9,
     5, 45, 48, 47, 21,
     1, 10, 8, 50,
-    1, 10, 8, 20);
+    1, 10, 8, 20,
+    0, 6000000);
 
 static Arduino_RGB_Display *gfx = new Arduino_RGB_Display(
     SCREEN_W, SCREEN_H, rgbpanel, DISPLAY_ROTATION, true,
@@ -28,6 +29,10 @@ static Arduino_RGB_Display *gfx = new Arduino_RGB_Display(
     sizeof(st7701_type1_init_operations));
 
 static lv_disp_draw_buf_t draw_buf;
+static lv_disp_t *display_handle = nullptr;
+static volatile bool display_reinitializing = false;
+static constexpr uint8_t EXPANDER_CONFIG_ON = 0x3a;
+static bool backlight_enabled = true;
 
 static void writeExpander(uint8_t reg, uint8_t value)
 {
@@ -40,10 +45,9 @@ static void writeExpander(uint8_t reg, uint8_t value)
 static void enablePanelPower()
 {
   Wire.begin(I2C_SDA, I2C_SCL);
-  // Keep the onboard buzzer disabled. EXIO5 is BEE_EN on the TCA9554 expander.
-  writeExpander(0x01, 0xdf);
+  // Keep the V4.0 onboard controller in the same output state as Waveshare's examples.
   writeExpander(0x02, 0xff);
-  writeExpander(0x03, 0x1a);
+  writeExpander(0x03, EXPANDER_CONFIG_ON);
   delay(120);
 }
 
@@ -54,6 +58,11 @@ static void lvTick(void *)
 
 static void displayFlush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p)
 {
+  if (display_reinitializing) {
+    lv_disp_flush_ready(disp);
+    return;
+  }
+
   uint32_t w = area->x2 - area->x1 + 1;
   uint32_t h = area->y2 - area->y1 + 1;
 
@@ -86,8 +95,7 @@ bool DisplayPanel::begin()
   disp_drv.ver_res = SCREEN_H;
   disp_drv.flush_cb = displayFlush;
   disp_drv.draw_buf = &draw_buf;
-  disp_drv.sw_rotate = 1;
-  lv_disp_drv_register(&disp_drv);
+  display_handle = lv_disp_drv_register(&disp_drv);
 
   const esp_timer_create_args_t tick_args = {
       .callback = &lvTick,
@@ -96,4 +104,32 @@ bool DisplayPanel::begin()
   esp_timer_create(&tick_args, &tick_timer);
   esp_timer_start_periodic(tick_timer, LVGL_TICK_MS * 1000);
   return true;
+}
+
+void DisplayPanel::reinitialize()
+{
+  display_reinitializing = true;
+  lv_timer_handler();
+  delay(20);
+
+  enablePanelPower();
+  gfx->begin();
+  gfx->fillScreen(0x0000);
+  delay(20);
+
+  display_reinitializing = false;
+  lv_obj_invalidate(lv_scr_act());
+  if (display_handle != nullptr) {
+    lv_refr_now(display_handle);
+  }
+}
+
+void DisplayPanel::setBacklight(bool enabled)
+{
+  backlight_enabled = enabled;
+}
+
+bool DisplayPanel::backlightEnabled()
+{
+  return backlight_enabled;
 }

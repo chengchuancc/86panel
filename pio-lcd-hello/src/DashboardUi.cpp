@@ -31,23 +31,23 @@ struct ThemePalette {
 };
 
 static const ThemePalette NIGHT = {
-  lv_color_hex(0x070b10), lv_color_hex(0x101824), lv_color_hex(0x101822),
-  lv_color_hex(0x0c121a), lv_color_hex(0x090e14), lv_color_hex(0x2b4052),
-  lv_color_hex(0x203140), lv_color_hex(0xf4f8fb), lv_color_hex(0x8ea4b5),
-  lv_color_hex(0x5a7182), lv_color_hex(0x38dff8), lv_color_hex(0xff66c7),
-  lv_color_hex(0x63ee95), lv_color_hex(0xffd36b), lv_color_hex(0x63ee95),
-  lv_color_hex(0xffd36b), lv_color_hex(0x6aa8ff), lv_color_hex(0xff6478),
-  lv_color_hex(0x72e895), lv_color_hex(0x1e2a36),
+  lv_color_hex(0x02070b), lv_color_hex(0x07131d), lv_color_hex(0x071018),
+  lv_color_hex(0x09141d), lv_color_hex(0x030a10), lv_color_hex(0x1c5062),
+  lv_color_hex(0x12313d), lv_color_hex(0xf2fbff), lv_color_hex(0x8ab8c8),
+  lv_color_hex(0x4f7a88), lv_color_hex(0x00e5ff), lv_color_hex(0xff3fb4),
+  lv_color_hex(0x00ff8a), lv_color_hex(0xffd24a), lv_color_hex(0x00ff8a),
+  lv_color_hex(0xffd24a), lv_color_hex(0x6c7cff), lv_color_hex(0xff3d62),
+  lv_color_hex(0x49ff9a), lv_color_hex(0x10212c),
 };
 
 static const ThemePalette DAY = {
-  lv_color_hex(0xf5f8fb), lv_color_hex(0xe5edf4), lv_color_hex(0xffffff),
-  lv_color_hex(0xf7fafc), lv_color_hex(0xf0f5f8), lv_color_hex(0xc3d1dc),
-  lv_color_hex(0xcdd9e2), lv_color_hex(0x17212b), lv_color_hex(0x536879),
-  lv_color_hex(0x7d909e), lv_color_hex(0x008da3), lv_color_hex(0xd92882),
-  lv_color_hex(0x0a9d52), lv_color_hex(0xb27a00), lv_color_hex(0x0a9d52),
-  lv_color_hex(0xb27a00), lv_color_hex(0x1f6fd1), lv_color_hex(0xc92a42),
-  lv_color_hex(0x168947), lv_color_hex(0xdce5ec),
+  lv_color_hex(0xecf7fb), lv_color_hex(0xd7eaf2), lv_color_hex(0xf8fdff),
+  lv_color_hex(0x0eef8fb), lv_color_hex(0xe5f2f7), lv_color_hex(0x8bb7c6),
+  lv_color_hex(0xb3d1dc), lv_color_hex(0x102532), lv_color_hex(0x3d6573),
+  lv_color_hex(0x7895a0), lv_color_hex(0x008aa0), lv_color_hex(0xc51b80),
+  lv_color_hex(0x009d5a), lv_color_hex(0xb97800), lv_color_hex(0x009d5a),
+  lv_color_hex(0xb97800), lv_color_hex(0x255edb), lv_color_hex(0xc92845),
+  lv_color_hex(0x11844e), lv_color_hex(0xd2e5ec),
 };
 
 static const ThemePalette *theme = &NIGHT;
@@ -70,6 +70,7 @@ static lv_obj_t *clock_label;
 static lv_obj_t *eth0_panel;
 static lv_obj_t *eth1_panel;
 static lv_obj_t *cpu_panel;
+static lv_obj_t *clients_panel;
 static lv_obj_t *sys_panel;
 static lv_obj_t *eth0_name_label;
 static lv_obj_t *eth1_name_label;
@@ -94,6 +95,9 @@ static lv_chart_series_t *eth1_tx_series;
 static lv_obj_t *core_bar[4];
 static lv_obj_t *core_label[4];
 static lv_obj_t *cpu_title_label;
+static lv_obj_t *clients_title_label;
+static lv_obj_t *clients_value_label;
+static lv_obj_t *clients_sub_label;
 static lv_obj_t *sys_title_label;
 static lv_obj_t *ram_bar;
 static lv_obj_t *ram_label;
@@ -133,6 +137,7 @@ static void applyTheme(bool day)
   setPanelColors(eth0_panel, theme->panel);
   setPanelColors(eth1_panel, theme->panel);
   setPanelColors(cpu_panel, theme->panel_2);
+  setPanelColors(clients_panel, theme->panel_2);
   setPanelColors(sys_panel, theme->panel_2);
 
   lv_obj_set_style_bg_color(eth0_chart, theme->chart_bg, 0);
@@ -161,6 +166,9 @@ static void applyTheme(bool day)
   setTextColor(eth1_tx_tag, theme->eth1_tx);
   setTextColor(eth1_tx_label, theme->eth1_tx);
   setTextColor(cpu_title_label, theme->text);
+  setTextColor(clients_title_label, theme->text);
+  setTextColor(clients_value_label, theme->blue);
+  setTextColor(clients_sub_label, theme->sub);
   setTextColor(sys_title_label, theme->text);
   setTextColor(temp_label, theme->amber);
   setTextColor(ram_label, theme->mint);
@@ -360,17 +368,17 @@ static lv_obj_t *makeEthPanel(lv_obj_t *parent, const char *name, lv_color_t rx_
 static lv_obj_t *makeCoreBlock(lv_obj_t *parent, int idx)
 {
   lv_obj_t *block = lv_obj_create(parent);
-  lv_obj_set_size(block, 50, 94);
+  lv_obj_set_size(block, 36, 88);
   lv_obj_clear_flag(block, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_bg_opa(block, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(block, 0, 0);
   lv_obj_set_style_pad_all(block, 0, 0);
 
-  core_label[idx] = makeLabel(block, "C0\n0%", theme->sub, &lv_font_montserrat_14);
+  core_label[idx] = makeLabel(block, "C0\n0%", theme->sub, &lv_font_montserrat_12);
   lv_obj_align(core_label[idx], LV_ALIGN_TOP_MID, 0, 0);
 
   core_bar[idx] = lv_bar_create(block);
-  lv_obj_set_size(core_bar[idx], 14, 54);
+  lv_obj_set_size(core_bar[idx], 12, 52);
   lv_obj_align(core_bar[idx], LV_ALIGN_BOTTOM_MID, 0, 0);
   lv_bar_set_range(core_bar[idx], 0, 100);
   lv_bar_set_value(core_bar[idx], 0, LV_ANIM_OFF);
@@ -449,28 +457,42 @@ void DashboardUi::build()
   lv_obj_align(eth1_panel, LV_ALIGN_TOP_MID, 0, 186);
 
   cpu_panel = lv_obj_create(main_root);
-  lv_obj_set_size(cpu_panel, 218, 126);
+  lv_obj_set_size(cpu_panel, 168, 126);
   lv_obj_align(cpu_panel, LV_ALIGN_BOTTOM_LEFT, 18, -18);
   styleCard(cpu_panel, theme->panel_2);
 
-  cpu_title_label = makeLabel(cpu_panel, "CPU CORES", theme->text, &lv_font_montserrat_16);
+  cpu_title_label = makeLabel(cpu_panel, "CPU", theme->text, &lv_font_montserrat_16);
   lv_obj_align(cpu_title_label, LV_ALIGN_TOP_LEFT, 0, -1);
   temp_label = makeLabel(cpu_panel, "--C", theme->amber, &lv_font_montserrat_16);
   lv_obj_align(temp_label, LV_ALIGN_TOP_RIGHT, 0, -1);
 
   lv_obj_t *core_row = lv_obj_create(cpu_panel);
-  lv_obj_set_size(core_row, 206, 92);
+  lv_obj_set_size(core_row, 154, 88);
   lv_obj_align(core_row, LV_ALIGN_BOTTOM_MID, 0, 0);
   lv_obj_clear_flag(core_row, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_bg_opa(core_row, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(core_row, 0, 0);
   lv_obj_set_style_pad_all(core_row, 0, 0);
-  lv_obj_set_style_pad_column(core_row, 2, 0);
+  lv_obj_set_style_pad_column(core_row, 3, 0);
   lv_obj_set_flex_flow(core_row, LV_FLEX_FLOW_ROW);
   for (int i = 0; i < 4; i++) makeCoreBlock(core_row, i);
 
+  clients_panel = lv_obj_create(main_root);
+  lv_obj_set_size(clients_panel, 116, 126);
+  lv_obj_align_to(clients_panel, cpu_panel, LV_ALIGN_OUT_RIGHT_MID, 6, 0);
+  styleCard(clients_panel, theme->panel_2);
+
+  clients_title_label = makeLabel(clients_panel, "CLIENTS", theme->text, &lv_font_montserrat_14);
+  lv_obj_align(clients_title_label, LV_ALIGN_TOP_LEFT, 0, -1);
+  clients_value_label = makeLabel(clients_panel, "--", theme->blue, &lv_font_montserrat_40);
+  lv_obj_set_width(clients_value_label, 98);
+  lv_label_set_long_mode(clients_value_label, LV_LABEL_LONG_CLIP);
+  lv_obj_align(clients_value_label, LV_ALIGN_CENTER, 0, -4);
+  clients_sub_label = makeLabel(clients_panel, "active", theme->sub, &lv_font_montserrat_14);
+  lv_obj_align(clients_sub_label, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+
   sys_panel = lv_obj_create(main_root);
-  lv_obj_set_size(sys_panel, 218, 126);
+  lv_obj_set_size(sys_panel, 148, 126);
   lv_obj_align(sys_panel, LV_ALIGN_BOTTOM_RIGHT, -18, -18);
   styleCard(sys_panel, theme->panel_2);
 
@@ -480,7 +502,7 @@ void DashboardUi::build()
   ram_label = makeLabel(sys_panel, "RAM 0%", theme->mint, &lv_font_montserrat_22);
   lv_obj_align(ram_label, LV_ALIGN_TOP_LEFT, 0, 24);
   ram_bar = lv_bar_create(sys_panel);
-  lv_obj_set_size(ram_bar, 194, 9);
+  lv_obj_set_size(ram_bar, 124, 9);
   lv_obj_align(ram_bar, LV_ALIGN_TOP_LEFT, 0, 54);
   lv_bar_set_range(ram_bar, 0, 100);
   lv_obj_set_style_bg_color(ram_bar, theme->bar_bg, LV_PART_MAIN);
@@ -488,7 +510,7 @@ void DashboardUi::build()
   lv_obj_set_style_radius(ram_bar, 5, LV_PART_MAIN);
   lv_obj_set_style_radius(ram_bar, 5, LV_PART_INDICATOR);
 
-  sys_line_1 = makeLabel(sys_panel, "conn --   clients --", theme->sub, &lv_font_montserrat_16);
+  sys_line_1 = makeLabel(sys_panel, "conn --", theme->sub, &lv_font_montserrat_16);
   lv_obj_align(sys_line_1, LV_ALIGN_TOP_LEFT, 0, 72);
   sys_line_2 = makeLabel(sys_panel, "uptime --", theme->dim, &lv_font_montserrat_14);
   lv_obj_align(sys_line_2, LV_ALIGN_BOTTOM_LEFT, 0, 0);
@@ -561,7 +583,7 @@ void DashboardUi::updateConnectionView(const Stats &stats, uint32_t reconnect_co
 
 void DashboardUi::updateStats(const Stats &stats)
 {
-  setMainVisible(stats.online);
+  setMainVisible(stats.online || stats.last_ok_ms != 0);
 
   pushHistory(eth0_rx_window, stats.eth0_rx);
   pushHistory(eth0_tx_window, stats.eth0_tx);
@@ -594,10 +616,12 @@ void DashboardUi::updateStats(const Stats &stats)
   }
 
   lv_label_set_text_fmt(temp_label, "%dC", stats.temp);
+  lv_label_set_text_fmt(clients_value_label, "%d", stats.clients);
+  lv_label_set_text_fmt(clients_sub_label, "conn %d", stats.conn);
   lv_label_set_text_fmt(ram_label, "RAM %d%%", stats.mem);
   lv_bar_set_value(ram_bar, stats.mem, LV_ANIM_OFF);
-  lv_label_set_text_fmt(sys_line_1, "conn %d   clients %d", stats.conn, stats.clients);
-  lv_label_set_text_fmt(sys_line_2, "uptime %s", stats.uptime.substring(0, 11).c_str());
+  // lv_label_set_text_fmt(sys_line_1, "conn %d", stats.conn);
+  lv_label_set_text_fmt(sys_line_2, "T %s", stats.uptime.substring(0, 11).c_str());
 
   if (WiFi.status() == WL_CONNECTED) {
     lv_label_set_text(status_label, stats.online ? "ONLINE" : stats.error.c_str());

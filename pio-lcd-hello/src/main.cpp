@@ -54,6 +54,8 @@ void loop()
   static uint32_t last_wifi_retry_ms = 0;
   static bool ota_started = false;
   static int last_sync_yday = -1;
+  static int last_panel_reinit_hour = -1;
+  static uint32_t last_panel_reinit_ms = 0;
 
   lv_timer_handler();
 
@@ -87,10 +89,21 @@ void loop()
     DashboardUi::updateNetworkIdentity();
 
     struct tm timeinfo;
-    if (getLocalTime(&timeinfo, 5) && timeinfo.tm_hour == 0 && timeinfo.tm_min == 0 &&
-        timeinfo.tm_yday != last_sync_yday) {
-      last_sync_yday = timeinfo.tm_yday;
-      syncTime();
+    if (getLocalTime(&timeinfo, 5)) {
+      if (timeinfo.tm_min == 0 && timeinfo.tm_hour != last_panel_reinit_hour) {
+        last_panel_reinit_hour = timeinfo.tm_hour;
+        last_panel_reinit_ms = now;
+        DisplayPanel::reinitialize();
+      }
+
+      if (timeinfo.tm_hour == 0 && timeinfo.tm_min == 0 &&  
+          timeinfo.tm_yday != last_sync_yday) {
+        last_sync_yday = timeinfo.tm_yday;
+        syncTime();
+      }
+    } else if (now - last_panel_reinit_ms > 60UL * 60UL * 1000UL) {
+      last_panel_reinit_ms = now;
+      DisplayPanel::reinitialize();
     }
   }
 

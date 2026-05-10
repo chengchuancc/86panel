@@ -1,0 +1,5 @@
+2026-05-10 12:24:07.884593 | T22432 | INFO | OTK App | OTK::Application::INITIALIZE (S:\protoolkit\otk_appls\creo_live_app\otk_app\OTKApp.cxx:131) | Initializing V8 Java Script Engine, PTC, 2018 (version=5.0.0.9, id=creo_live_app)
+2026-05-10 12:24:07.967517 | T22432 | INFO | OTK App | OTK::Application::INITIALIZE (S:\protoolkit\otk_appls\creo_live_app\otk_app\OTKApp.cxx:132) | Creo version: Creo 8.0, build: 2021023
+2026-05-10 12:24:07.967713 | T22432 | INFO | OTK App | OTK::Application::INITIALIZE (S:\protoolkit\otk_appls\creo_live_app\otk_app\OTKApp.cxx:133) | Compiled on: Jan 13 2021 05:14:25
+2026-05-10 12:24:08.010908 | T22432 | FUNC | CreoLive | SimulateLiveApplication::initializeCommands (S:\protoolkit\otk_appls\creo_live_app\creo_simulate_live_app\CreoSimulateLiveApp.cxx:1394) | enter
+2026-05-10 12:24:08.032855 | T22432 | FUNC | CreoLive | SimulateLiveApplication::initializeCommands (S:\protoolkit\otk_appls\creo_live_app\creo_simulate_live_app\CreoSimulateLiveApp.cxx:-1394) | return
