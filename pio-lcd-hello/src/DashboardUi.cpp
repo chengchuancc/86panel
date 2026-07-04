@@ -197,19 +197,19 @@ static const char *wifiStatusText(wl_status_t status)
   }
 }
 
-static String formatSpeed(float kbps)
+static void formatSpeed(float kbps, char *buf, size_t len)
 {
   float mbps = kbps / 1024.0f;
-  if (mbps < 10.0f) return String(mbps, 2) + "M";
-  if (mbps < 100.0f) return String(mbps, 1) + "M";
-  return String(mbps, 0) + "M";
+  if (mbps < 10.0f) snprintf(buf, len, "%.2fM", mbps);
+  else if (mbps < 100.0f) snprintf(buf, len, "%.1fM", mbps);
+  else snprintf(buf, len, "%.0fM", mbps);
 }
 
-static String formatSpeedCompact(float kbps)
+static void formatSpeedCompact(float kbps, char *buf, size_t len)
 {
   float mbps = kbps / 1024.0f;
-  if (mbps < 10.0f) return String(mbps, 2) + "M";
-  return String(mbps, 1) + "M";
+  if (mbps < 10.0f) snprintf(buf, len, "%.2fM", mbps);
+  else snprintf(buf, len, "%.1fM", mbps);
 }
 
 static void pushHistory(float *history, float value)
@@ -243,7 +243,9 @@ static int chartValue(float kbps, float chart_max)
 static void updateChartScale(lv_obj_t *chart, lv_obj_t *scale_label, float chart_max)
 {
   lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, 0, 1000);
-  lv_label_set_text_fmt(scale_label, "%s", formatSpeedCompact(chart_max).c_str());
+  char buf[16];
+  formatSpeedCompact(chart_max, buf, sizeof(buf));
+  lv_label_set_text(scale_label, buf);
 }
 
 // Smooth a single value using Catmull-Rom-like weighted average of neighbors
@@ -532,7 +534,9 @@ void DashboardUi::updateClock()
 void DashboardUi::updateNetworkIdentity()
 {
   if (WiFi.status() == WL_CONNECTED) {
-    lv_label_set_text_fmt(ip_label, "IP %s", WiFi.localIP().toString().c_str());
+    char ip_buf[16];
+    WiFi.localIP().toString().toCharArray(ip_buf, sizeof(ip_buf));
+    lv_label_set_text_fmt(ip_label, "IP %s", ip_buf);
   } else {
     lv_label_set_text(ip_label, "IP --");
   }
@@ -543,12 +547,16 @@ void DashboardUi::updateConnectionView(const Stats &stats, uint32_t reconnect_co
 {
   wl_status_t wifi_status = WiFi.status();
   if (wifi_status == WL_CONNECTED) {
+    char ip_buf[16], gw_buf[16], mac_buf[18], bssid_buf[18];
+    WiFi.localIP().toString().toCharArray(ip_buf, sizeof(ip_buf));
+    WiFi.macAddress().toCharArray(mac_buf, sizeof(mac_buf));
+    WiFi.gatewayIP().toString().toCharArray(gw_buf, sizeof(gw_buf));
+    WiFi.BSSIDstr().toCharArray(bssid_buf, sizeof(bssid_buf));
+
     lv_label_set_text_fmt(connect_wifi_label, "WiFi: %s   CH %d   %d dBm",
                           wifiStatusText(wifi_status), WiFi.channel(), WiFi.RSSI());
-    lv_label_set_text_fmt(connect_ip_label, "IP: %s   MAC %s",
-                          WiFi.localIP().toString().c_str(), WiFi.macAddress().c_str());
-    lv_label_set_text_fmt(connect_route_label, "Gateway: %s   BSSID %s",
-                          WiFi.gatewayIP().toString().c_str(), WiFi.BSSIDstr().c_str());
+    lv_label_set_text_fmt(connect_ip_label, "IP: %s   MAC %s", ip_buf, mac_buf);
+    lv_label_set_text_fmt(connect_route_label, "Gateway: %s   BSSID %s", gw_buf, bssid_buf);
     lv_label_set_text_fmt(connect_target_label, "Stats: %s", statsTargetUrl().c_str());
   } else {
     lv_label_set_text_fmt(connect_wifi_label, "WiFi: %s   SSID %s",
@@ -572,27 +580,81 @@ void DashboardUi::updateConnectionView(const Stats &stats, uint32_t reconnect_co
                         (unsigned long)reconnect_count, (unsigned long)(millis() / 1000));
 }
 
-void DashboardUi::updateStats(const Stats &stats)
+// Interpolation state
+static Stats prev_stats;
+static Stats target_stats;
+static bool interp_initialized = false;
+
+static float lerpF(float a, float b, float t)
 {
-  setMainVisible(stats.online || stats.last_ok_ms != 0);
+  return a + (b - a) * t;
+}
 
-  pushHistory(eth0_rx_window, stats.eth0_rx);
-  pushHistory(eth0_tx_window, stats.eth0_tx);
-  pushHistory(eth1_rx_window, stats.eth1_rx);
-  pushHistory(eth1_tx_window, stats.eth1_tx);
+void DashboardUi::setTargetStats(const Stats &target)
+{
+  if (!interp_initialized) {
+    prev_stats = target;
+    interp_initialized = true;
+  } else {
+    prev_stats = target_stats;
+  }
+  target_stats = target;
 
-  lv_label_set_text(eth0_rx_label, formatSpeed(stats.eth0_rx).c_str());
-  lv_label_set_text(eth0_tx_label, formatSpeed(stats.eth0_tx).c_str());
-  lv_label_set_text_fmt(eth0_sum_label, "%s / %s",
-                        formatSpeedCompact(stats.eth0_rx).c_str(),
-                        formatSpeedCompact(stats.eth0_tx).c_str());
+  setMainVisible(target.online || target.last_ok_ms != 0);
 
-  lv_label_set_text(eth1_rx_label, formatSpeed(stats.eth1_rx).c_str());
-  lv_label_set_text(eth1_tx_label, formatSpeed(stats.eth1_tx).c_str());
-  lv_label_set_text_fmt(eth1_sum_label, "%s / %s",
-                        formatSpeedCompact(stats.eth1_rx).c_str(),
-                        formatSpeedCompact(stats.eth1_tx).c_str());
+  // Push the new target values into history (chart still shows discrete samples)
+  pushHistory(eth0_rx_window, target.eth0_rx);
+  pushHistory(eth0_tx_window, target.eth0_tx);
+  pushHistory(eth1_rx_window, target.eth1_rx);
+  pushHistory(eth1_tx_window, target.eth1_tx);
+}
 
+void DashboardUi::interpolateUpdate(float t)
+{
+  if (!interp_initialized) return;
+  if (t > 1.0f) t = 1.0f;
+  if (t < 0.0f) t = 0.0f;
+
+  // Interpolated values
+  Stats cur;
+  cur.eth0_rx = lerpF(prev_stats.eth0_rx, target_stats.eth0_rx, t);
+  cur.eth0_tx = lerpF(prev_stats.eth0_tx, target_stats.eth0_tx, t);
+  cur.eth1_rx = lerpF(prev_stats.eth1_rx, target_stats.eth1_rx, t);
+  cur.eth1_tx = lerpF(prev_stats.eth1_tx, target_stats.eth1_tx, t);
+  cur.cpu     = (int)lerpF(prev_stats.cpu, target_stats.cpu, t);
+  cur.temp    = (int)lerpF(prev_stats.temp, target_stats.temp, t);
+  cur.mem     = (int)lerpF(prev_stats.mem, target_stats.mem, t);
+  cur.conn    = (int)lerpF(prev_stats.conn, target_stats.conn, t);
+  cur.clients = (int)lerpF(prev_stats.clients, target_stats.clients, t);
+  for (int i = 0; i < 4; i++)
+    cur.cores[i] = (int)lerpF(prev_stats.cores[i], target_stats.cores[i], t);
+  cur.online     = target_stats.online;
+  cur.last_ok_ms = target_stats.last_ok_ms;
+  cur.error      = target_stats.error;
+  cur.uptime     = target_stats.uptime;
+
+  // Update labels with interpolated speeds (stack buffers to avoid heap fragmentation)
+  char spd_buf[16];
+  formatSpeed(cur.eth0_rx, spd_buf, sizeof(spd_buf));
+  lv_label_set_text(eth0_rx_label, spd_buf);
+  formatSpeed(cur.eth0_tx, spd_buf, sizeof(spd_buf));
+  lv_label_set_text(eth0_tx_label, spd_buf);
+
+  char rx_buf[16], tx_buf[16];
+  formatSpeedCompact(cur.eth0_rx, rx_buf, sizeof(rx_buf));
+  formatSpeedCompact(cur.eth0_tx, tx_buf, sizeof(tx_buf));
+  lv_label_set_text_fmt(eth0_sum_label, "%s / %s", rx_buf, tx_buf);
+
+  formatSpeed(cur.eth1_rx, spd_buf, sizeof(spd_buf));
+  lv_label_set_text(eth1_rx_label, spd_buf);
+  formatSpeed(cur.eth1_tx, spd_buf, sizeof(spd_buf));
+  lv_label_set_text(eth1_tx_label, spd_buf);
+
+  formatSpeedCompact(cur.eth1_rx, rx_buf, sizeof(rx_buf));
+  formatSpeedCompact(cur.eth1_tx, tx_buf, sizeof(tx_buf));
+  lv_label_set_text_fmt(eth1_sum_label, "%s / %s", rx_buf, tx_buf);
+
+  // Charts use the raw history (not interpolated), just redraw for smooth color transitions
   float eth0_max = autoChartMax(eth0_rx_window, eth0_tx_window);
   float eth1_max = autoChartMax(eth1_rx_window, eth1_tx_window);
   updateChartScale(eth0_chart, eth0_scale_label, eth0_max);
@@ -602,29 +664,32 @@ void DashboardUi::updateStats(const Stats &stats)
   redrawChart(eth0_chart, eth0_rx_series, eth0_tx_series, eth0_rx_window, eth0_tx_window, eth0_max);
   redrawChart(eth1_chart, eth1_rx_series, eth1_tx_series, eth1_rx_window, eth1_tx_window, eth1_max);
 
-  // Dynamic color: faster speed → redder (labels only, chart lines stay fixed)
-  lv_obj_set_style_text_color(eth0_rx_label, speedColor(stats.eth0_rx), 0);
-  lv_obj_set_style_text_color(eth0_tx_label, speedColor(stats.eth0_tx), 0);
-  lv_obj_set_style_text_color(eth1_rx_label, speedColor(stats.eth1_rx), 0);
-  lv_obj_set_style_text_color(eth1_tx_label, speedColor(stats.eth1_tx), 0);
+  // Dynamic color on labels
+  lv_obj_set_style_text_color(eth0_rx_label, speedColor(cur.eth0_rx), 0);
+  lv_obj_set_style_text_color(eth0_tx_label, speedColor(cur.eth0_tx), 0);
+  lv_obj_set_style_text_color(eth1_rx_label, speedColor(cur.eth1_rx), 0);
+  lv_obj_set_style_text_color(eth1_tx_label, speedColor(cur.eth1_tx), 0);
 
+  // System stats (use interpolated integers)
   for (int i = 0; i < 4; i++) {
-    lv_label_set_text_fmt(core_label[i], "C%d\n%d%%", i, stats.cores[i]);
-    lv_obj_set_style_text_color(core_label[i], stats.cores[i] > 80 ? theme->red : theme->sub, 0);
-    lv_bar_set_value(core_bar[i], stats.cores[i], LV_ANIM_OFF);
+    lv_label_set_text_fmt(core_label[i], "C%d\n%d%%", i, cur.cores[i]);
+    lv_obj_set_style_text_color(core_label[i], cur.cores[i] > 80 ? theme->red : theme->sub, 0);
+    lv_bar_set_value(core_bar[i], cur.cores[i], LV_ANIM_OFF);
   }
 
-  lv_label_set_text_fmt(temp_label, "%dC", stats.temp);
-  lv_label_set_text_fmt(clients_value_label, "%d", stats.clients);
-  lv_label_set_text_fmt(clients_sub_label, "conn %d", stats.conn);
-  lv_label_set_text_fmt(ram_label, "RAM %d%%", stats.mem);
-  lv_bar_set_value(ram_bar, stats.mem, LV_ANIM_OFF);
-  // lv_label_set_text_fmt(sys_line_1, "conn %d", stats.conn);
-  lv_label_set_text_fmt(sys_line_2, "T %s", stats.uptime.substring(0, 11).c_str());
+  lv_label_set_text_fmt(temp_label, "%dC", cur.temp);
+  lv_label_set_text_fmt(clients_value_label, "%d", cur.clients);
+  lv_label_set_text_fmt(clients_sub_label, "conn %d", cur.conn);
+  lv_label_set_text_fmt(ram_label, "RAM %d%%", cur.mem);
+  lv_bar_set_value(ram_bar, cur.mem, LV_ANIM_OFF);
+  char uptime_short[12];
+  strncpy(uptime_short, cur.uptime.c_str(), 11);
+  uptime_short[11] = '\0';
+  lv_label_set_text_fmt(sys_line_2, "T %s", uptime_short);
 
   if (WiFi.status() == WL_CONNECTED) {
-    lv_label_set_text(status_label, stats.online ? "ONLINE" : stats.error.c_str());
-    lv_obj_set_style_text_color(status_label, stats.online ? theme->ok : theme->red, 0);
+    lv_label_set_text(status_label, cur.online ? "ONLINE" : cur.error.c_str());
+    lv_obj_set_style_text_color(status_label, cur.online ? theme->ok : theme->red, 0);
   } else {
     lv_label_set_text(status_label, "WIFI LOST");
     lv_obj_set_style_text_color(status_label, theme->red, 0);

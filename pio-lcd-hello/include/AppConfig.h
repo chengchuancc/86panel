@@ -5,7 +5,7 @@
 static constexpr int I2C_SDA = 15;
 static constexpr int I2C_SCL = 7;
 static constexpr uint8_t IO_EXPANDER_ADDR = 0x24;
-static constexpr uint32_t LVGL_TICK_MS = 2;
+static constexpr uint32_t LVGL_TICK_MS = 5;
 static constexpr uint16_t SCREEN_W = 480;
 static constexpr uint16_t SCREEN_H = 480;
 static constexpr uint16_t CHART_POINTS = 118;

@@ -45,8 +45,8 @@ static void writeExpander(uint8_t reg, uint8_t value)
 static void enablePanelPower()
 {
   Wire.begin(I2C_SDA, I2C_SCL);
-  // Keep the V4.0 onboard controller in the same output state as Waveshare's examples.
-  writeExpander(0x02, 0xdf); // bit5=0 to keep buzzer (EXIO5/BEE_EN) off
+  // Port0: bit5=0 keeps buzzer (EXIO5/BEE_EN) off, other bits high for backlight etc.
+  writeExpander(0x02, 0xdf);
   writeExpander(0x03, EXPANDER_CONFIG_ON);
   delay(120);
 }
@@ -109,13 +109,16 @@ bool DisplayPanel::begin()
 void DisplayPanel::reinitialize()
 {
   display_reinitializing = true;
-  lv_timer_handler();
-  delay(20);
+  // Drain any pending flushes before touching the display controller
+  for (int i = 0; i < 10; i++) {
+    lv_timer_handler();
+    delay(5);
+  }
 
   enablePanelPower();
   gfx->begin();
   gfx->fillScreen(0x0000);
-  delay(20);
+  delay(50);
 
   display_reinitializing = false;
   lv_obj_invalidate(lv_scr_act());

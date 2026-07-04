@@ -13,13 +13,19 @@ IPAddress statsTargetHost()
 
 String statsTargetUrl()
 {
-  return String("http://") + statsTargetHost().toString() + ":" + STATS_PORT + STATS_PATH;
+  static String cached;
+  if (cached.length() == 0) {
+    cached = String("http://") + statsTargetHost().toString() + ":" + STATS_PORT + STATS_PATH;
+  }
+  return cached;
 }
 
 String networkProbeSummary()
 {
   return String("Target ") + statsTargetUrl();
 }
+
+static constexpr size_t MAX_HTTP_BODY = 8192;
 
 static bool readHttpBody(WiFiClient &client, int &status_code, String &body, String &status_line)
 {
@@ -36,13 +42,15 @@ static bool readHttpBody(WiFiClient &client, int &status_code, String &body, Str
     if (line.length() == 0) break;
   }
 
+  body.reserve(1024);
   uint32_t start_ms = millis();
   while (millis() - start_ms < STATS_HTTP_TIMEOUT_MS) {
     while (client.available()) {
+      if (body.length() >= MAX_HTTP_BODY) break;
       body += (char)client.read();
       start_ms = millis();
     }
-    if (!client.connected()) break;
+    if (!client.connected() || body.length() >= MAX_HTTP_BODY) break;
     delay(1);
   }
 
@@ -64,9 +72,10 @@ static bool parseStatsPayload(const String &raw_payload, Stats &stats)
   DeserializationError error = deserializeJson(doc, payload);
 
   if (error) {
-    Serial.printf("JSON error: %s\n", error.c_str());
-    Serial.println(payload);
-    stats.error = String("JSON ") + error.c_str();
+    // Truncate error message to prevent unbounded String growth
+    char err_buf[32];
+    snprintf(err_buf, sizeof(err_buf), "JSON %.20s", error.c_str());
+    stats.error = err_buf;
     return false;
   }
 
@@ -101,14 +110,6 @@ bool fetchStats(Stats &stats)
 
   if (!client.connect(host, STATS_PORT, STATS_HTTP_TIMEOUT_MS)) {
     stats.error = "CONN FAIL";
-    Serial.printf("Stats connect failed: local=%s gateway=%s target=%s:%u bssid=%s ch=%d rssi=%d\n",
-                  WiFi.localIP().toString().c_str(),
-                  WiFi.gatewayIP().toString().c_str(),
-                  host.toString().c_str(),
-                  STATS_PORT,
-                  WiFi.BSSIDstr().c_str(),
-                  WiFi.channel(),
-                  WiFi.RSSI());
     return false;
   }
 
@@ -129,7 +130,9 @@ bool fetchStats(Stats &stats)
   client.stop();
 
   if (http_code != 200) {
-    stats.error = "HTTP " + String(http_code);
+    char err_buf[12];
+    snprintf(err_buf, sizeof(err_buf), "HTTP %d", http_code);
+    stats.error = err_buf;
     return false;
   }
 
