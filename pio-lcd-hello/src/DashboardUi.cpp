@@ -40,18 +40,7 @@ static const ThemePalette NIGHT = {
   lv_color_hex(0x49ff9a), lv_color_hex(0x10212c),
 };
 
-static const ThemePalette DAY = {
-  lv_color_hex(0xecf7fb), lv_color_hex(0xd7eaf2), lv_color_hex(0xf8fdff),
-  lv_color_hex(0x0eef8fb), lv_color_hex(0xe5f2f7), lv_color_hex(0x8bb7c6),
-  lv_color_hex(0xb3d1dc), lv_color_hex(0x102532), lv_color_hex(0x3d6573),
-  lv_color_hex(0x7895a0), lv_color_hex(0x008aa0), lv_color_hex(0xc51b80),
-  lv_color_hex(0x009d5a), lv_color_hex(0xb97800), lv_color_hex(0x009d5a),
-  lv_color_hex(0xb97800), lv_color_hex(0x255edb), lv_color_hex(0xc92845),
-  lv_color_hex(0x11844e), lv_color_hex(0xd2e5ec),
-};
-
 static const ThemePalette *theme = &NIGHT;
-static bool is_day_theme = false;
 static bool main_visible = false;
 
 static lv_obj_t *screen_obj;
@@ -109,6 +98,66 @@ static float eth0_tx_window[CHART_POINTS];
 static float eth1_rx_window[CHART_POINTS];
 static float eth1_tx_window[CHART_POINTS];
 
+// Per-chart context for the draw callback
+struct ChartCtx {
+  const float *rx_hist;
+  const float *tx_hist;
+  lv_chart_series_t *rx_ser;
+  lv_chart_series_t *tx_ser;
+  float chart_max;
+};
+static ChartCtx eth0_ctx = {eth0_rx_window, eth0_tx_window, nullptr, nullptr, 1024.0f};
+static ChartCtx eth1_ctx = {eth1_rx_window, eth1_tx_window, nullptr, nullptr, 1024.0f};
+
+// Map speed (kbps) to a color: green(slow) → yellow(mid) → red(fast)
+static lv_color_t speedColor(float kbps)
+{
+  if (kbps <= 0.0f) return lv_color_hex(0x00ff8a);
+  if (kbps >= 5120.0f) return lv_color_hex(0xff3d62);
+
+  uint8_t r, g, b;
+  if (kbps < 1024.0f) {
+    float t = kbps / 1024.0f;
+    r = (uint8_t)(0x00 + t * (0xff - 0x00));
+    g = (uint8_t)(0xff + t * (0xd2 - 0xff));
+    b = (uint8_t)(0x8a + t * (0x4a - 0x8a));
+  } else {
+    float t = (kbps - 1024.0f) / (5120.0f - 1024.0f);
+    if (t > 1.0f) t = 1.0f;
+    r = 0xff;
+    g = (uint8_t)(0xd2 + t * (0x3d - 0xd2));
+    b = (uint8_t)(0x4a + t * (0x62 - 0x4a));
+  }
+  return lv_color_make(r, g, b);
+}
+
+// Custom draw callback: color each line segment by its speed value
+static void chartDrawCb(lv_event_t *e)
+{
+  lv_obj_draw_part_dsc_t *dsc = (lv_obj_draw_part_dsc_t *)lv_event_get_param(e);
+  if (dsc->part != LV_PART_ITEMS) return;
+  if (dsc->type != LV_CHART_DRAW_PART_LINE_AND_POINT) return;
+
+  ChartCtx *ctx = (ChartCtx *)lv_event_get_user_data(e);
+  if (!ctx || !dsc->sub_part_ptr) return;
+
+  uint32_t idx = dsc->id;
+  if (idx >= CHART_POINTS - 1) return;
+
+  // Determine which series this segment belongs to
+  const float *hist = nullptr;
+  if (dsc->sub_part_ptr == ctx->rx_ser) {
+    hist = ctx->rx_hist;
+  } else if (dsc->sub_part_ptr == ctx->tx_ser) {
+    hist = ctx->tx_hist;
+  } else {
+    return;
+  }
+
+  float avg = (hist[idx] + hist[idx + 1]) / 2.0f;
+  dsc->line_dsc->color = speedColor(avg);
+}
+
 static void setTextColor(lv_obj_t *obj, lv_color_t color)
 {
   if (obj) lv_obj_set_style_text_color(obj, color, 0);
@@ -119,75 +168,6 @@ static void setPanelColors(lv_obj_t *obj, lv_color_t bg)
   if (!obj) return;
   lv_obj_set_style_bg_color(obj, bg, 0);
   lv_obj_set_style_border_color(obj, theme->border, 0);
-}
-
-static void applyTheme(bool day)
-{
-  if (day == is_day_theme && screen_obj) return;
-  is_day_theme = day;
-  theme = day ? &DAY : &NIGHT;
-  if (!screen_obj) return;
-
-  lv_obj_set_style_bg_color(screen_obj, theme->bg, 0);
-  lv_obj_set_style_bg_grad_color(screen_obj, theme->bg_grad, 0);
-  lv_obj_set_style_bg_color(main_root, theme->bg, 0);
-  lv_obj_set_style_bg_grad_color(main_root, theme->bg_grad, 0);
-  lv_obj_set_style_bg_color(connect_root, theme->bg, 0);
-  lv_obj_set_style_bg_grad_color(connect_root, theme->bg_grad, 0);
-  setPanelColors(eth0_panel, theme->panel);
-  setPanelColors(eth1_panel, theme->panel);
-  setPanelColors(cpu_panel, theme->panel_2);
-  setPanelColors(clients_panel, theme->panel_2);
-  setPanelColors(sys_panel, theme->panel_2);
-
-  lv_obj_set_style_bg_color(eth0_chart, theme->chart_bg, 0);
-  lv_obj_set_style_bg_color(eth1_chart, theme->chart_bg, 0);
-  lv_obj_set_style_line_color(eth0_chart, theme->grid, LV_PART_MAIN);
-  lv_obj_set_style_line_color(eth1_chart, theme->grid, LV_PART_MAIN);
-  lv_chart_set_series_color(eth0_chart, eth0_rx_series, theme->eth0_rx);
-  lv_chart_set_series_color(eth0_chart, eth0_tx_series, theme->eth0_tx);
-  lv_chart_set_series_color(eth1_chart, eth1_rx_series, theme->eth1_rx);
-  lv_chart_set_series_color(eth1_chart, eth1_tx_series, theme->eth1_tx);
-
-  setTextColor(clock_label, theme->dim);
-  setTextColor(ip_label, theme->dim);
-  setTextColor(eth0_name_label, theme->text);
-  setTextColor(eth1_name_label, theme->text);
-  setTextColor(eth0_sum_label, theme->sub);
-  setTextColor(eth1_sum_label, theme->sub);
-  setTextColor(eth0_scale_label, theme->dim);
-  setTextColor(eth1_scale_label, theme->dim);
-  setTextColor(eth0_rx_tag, theme->eth0_rx);
-  setTextColor(eth0_rx_label, theme->eth0_rx);
-  setTextColor(eth0_tx_tag, theme->eth0_tx);
-  setTextColor(eth0_tx_label, theme->eth0_tx);
-  setTextColor(eth1_rx_tag, theme->eth1_rx);
-  setTextColor(eth1_rx_label, theme->eth1_rx);
-  setTextColor(eth1_tx_tag, theme->eth1_tx);
-  setTextColor(eth1_tx_label, theme->eth1_tx);
-  setTextColor(cpu_title_label, theme->text);
-  setTextColor(clients_title_label, theme->text);
-  setTextColor(clients_value_label, theme->blue);
-  setTextColor(clients_sub_label, theme->sub);
-  setTextColor(sys_title_label, theme->text);
-  setTextColor(temp_label, theme->amber);
-  setTextColor(ram_label, theme->mint);
-  setTextColor(sys_line_1, theme->sub);
-  setTextColor(sys_line_2, theme->dim);
-  setTextColor(connect_title_label, theme->text);
-  setTextColor(connect_wifi_label, theme->sub);
-  setTextColor(connect_ip_label, theme->sub);
-  setTextColor(connect_route_label, theme->sub);
-  setTextColor(connect_target_label, theme->sub);
-  setTextColor(connect_error_label, theme->red);
-  setTextColor(connect_retry_label, theme->dim);
-
-  for (int i = 0; i < 4; i++) {
-    lv_obj_set_style_bg_color(core_bar[i], theme->bar_bg, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(core_bar[i], i % 2 ? theme->blue : theme->amber, LV_PART_INDICATOR);
-  }
-  lv_obj_set_style_bg_color(ram_bar, theme->bar_bg, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(ram_bar, theme->mint, LV_PART_INDICATOR);
 }
 
 static void setMainVisible(bool visible)
@@ -219,17 +199,17 @@ static const char *wifiStatusText(wl_status_t status)
 
 static String formatSpeed(float kbps)
 {
-  if (kbps < 100.0f) return String(kbps, 1) + "K";
-  if (kbps < 1024.0f) return String((int)kbps) + "K";
-  if (kbps < 1024.0f * 100.0f) return String(kbps / 1024.0f, 1) + "M";
-  return String(kbps / 1024.0f, 0) + "M";
+  float mbps = kbps / 1024.0f;
+  if (mbps < 10.0f) return String(mbps, 2) + "M";
+  if (mbps < 100.0f) return String(mbps, 1) + "M";
+  return String(mbps, 0) + "M";
 }
 
 static String formatSpeedCompact(float kbps)
 {
-  if (kbps < 100.0f) return String(kbps, 1) + "K";
-  if (kbps < 1024.0f) return String((int)kbps) + "K";
-  return String(kbps / 1024.0f, 1) + "M";
+  float mbps = kbps / 1024.0f;
+  if (mbps < 10.0f) return String(mbps, 2) + "M";
+  return String(mbps, 1) + "M";
 }
 
 static void pushHistory(float *history, float value)
@@ -246,7 +226,7 @@ static float autoChartMax(const float *rx_history, const float *tx_history)
     if (rx_history[i] > peak) peak = rx_history[i];
     if (tx_history[i] > peak) peak = tx_history[i];
   }
-  if (peak < 500.0f) return 500;
+  if (peak < 1024.0f) return 1024;
   return peak;
 }
 
@@ -266,12 +246,23 @@ static void updateChartScale(lv_obj_t *chart, lv_obj_t *scale_label, float chart
   lv_label_set_text_fmt(scale_label, "%s", formatSpeedCompact(chart_max).c_str());
 }
 
+// Smooth a single value using Catmull-Rom-like weighted average of neighbors
+static float smoothVal(const float *hist, uint16_t idx)
+{
+  if (idx == 0) return hist[0];
+  if (idx >= CHART_POINTS - 1) return hist[CHART_POINTS - 1];
+  // Weighted: 25% prev + 50% current + 25% next
+  return hist[idx - 1] * 0.25f + hist[idx] * 0.5f + hist[idx + 1] * 0.25f;
+}
+
 static void redrawChart(lv_obj_t *chart, lv_chart_series_t *rx_series, lv_chart_series_t *tx_series,
                         const float *rx_history, const float *tx_history, float chart_max)
 {
   for (uint16_t i = 0; i < CHART_POINTS; i++) {
-    lv_chart_set_value_by_id(chart, rx_series, i, chartValue(rx_history[i], chart_max));
-    lv_chart_set_value_by_id(chart, tx_series, i, chartValue(tx_history[i], chart_max));
+    float rx_s = smoothVal(rx_history, i);
+    float tx_s = smoothVal(tx_history, i);
+    lv_chart_set_value_by_id(chart, rx_series, i, chartValue(rx_s, chart_max));
+    lv_chart_set_value_by_id(chart, tx_series, i, chartValue(tx_s, chart_max));
   }
   lv_chart_refresh(chart);
 }
@@ -298,7 +289,8 @@ static void styleCard(lv_obj_t *obj, lv_color_t bg)
 }
 
 static lv_obj_t *makeLineChart(lv_obj_t *parent, lv_color_t rx_color, lv_color_t tx_color,
-                               lv_chart_series_t **rx_series, lv_chart_series_t **tx_series)
+                               lv_chart_series_t **rx_series, lv_chart_series_t **tx_series,
+                               ChartCtx *ctx)
 {
   lv_obj_t *obj = lv_chart_create(parent);
   lv_obj_set_size(obj, 320, 108);
@@ -314,10 +306,18 @@ static lv_obj_t *makeLineChart(lv_obj_t *parent, lv_color_t rx_color, lv_color_t
   lv_obj_set_style_line_color(obj, theme->grid, LV_PART_MAIN);
   lv_obj_set_style_line_width(obj, 1, LV_PART_MAIN);
   lv_obj_set_style_size(obj, 0, LV_PART_INDICATOR);
+  lv_obj_set_style_line_width(obj, 2, LV_PART_ITEMS);
   *rx_series = lv_chart_add_series(obj, rx_color, LV_CHART_AXIS_PRIMARY_Y);
   *tx_series = lv_chart_add_series(obj, tx_color, LV_CHART_AXIS_PRIMARY_Y);
   lv_chart_set_all_value(obj, *rx_series, 0);
   lv_chart_set_all_value(obj, *tx_series, 0);
+
+  // Store series pointers in ctx and register draw callback
+  if (ctx) {
+    ctx->rx_ser = *rx_series;
+    ctx->tx_ser = *tx_series;
+    lv_obj_add_event_cb(obj, chartDrawCb, LV_EVENT_DRAW_PART_BEGIN, ctx);
+  }
   return obj;
 }
 
@@ -325,7 +325,7 @@ static lv_obj_t *makeEthPanel(lv_obj_t *parent, const char *name, lv_color_t rx_
                               lv_obj_t **rx_label, lv_obj_t **tx_label, lv_obj_t **sum_label,
                               lv_obj_t **scale_label,
                               lv_obj_t **chart_out, lv_chart_series_t **rx_series,
-                              lv_chart_series_t **tx_series)
+                              lv_chart_series_t **tx_series, ChartCtx *ctx)
 {
   lv_obj_t *panel = lv_obj_create(parent);
   lv_obj_set_size(panel, 444, 146);
@@ -346,21 +346,21 @@ static lv_obj_t *makeEthPanel(lv_obj_t *parent, const char *name, lv_color_t rx_
   if (strcmp(name, "eth0") == 0) eth0_rx_tag = rx_tag;
   else eth1_rx_tag = rx_tag;
   lv_obj_align(rx_tag, LV_ALIGN_TOP_LEFT, 0, 66);
-  *rx_label = makeLabel(panel, "0.0K", rx_color, &lv_font_montserrat_24);
-  lv_obj_set_width(*rx_label, 110);
+  *rx_label = makeLabel(panel, "0.00M", rx_color, &lv_font_montserrat_28);
+  lv_obj_set_width(*rx_label, 140);
   lv_label_set_long_mode(*rx_label, LV_LABEL_LONG_CLIP);
-  lv_obj_align(*rx_label, LV_ALIGN_TOP_LEFT, 20, 54);
+  lv_obj_align(*rx_label, LV_ALIGN_TOP_LEFT, 20, 50);
 
   lv_obj_t *tx_tag = makeLabel(panel, "TX", tx_color, &lv_font_montserrat_12);
   if (strcmp(name, "eth0") == 0) eth0_tx_tag = tx_tag;
   else eth1_tx_tag = tx_tag;
   lv_obj_align(tx_tag, LV_ALIGN_TOP_LEFT, 0, 98);
-  *tx_label = makeLabel(panel, "0.0K", tx_color, &lv_font_montserrat_24);
-  lv_obj_set_width(*tx_label, 110);
+  *tx_label = makeLabel(panel, "0.00M", tx_color, &lv_font_montserrat_28);
+  lv_obj_set_width(*tx_label, 140);
   lv_label_set_long_mode(*tx_label, LV_LABEL_LONG_CLIP);
-  lv_obj_align(*tx_label, LV_ALIGN_TOP_LEFT, 20, 86);
+  lv_obj_align(*tx_label, LV_ALIGN_TOP_LEFT, 20, 88);
 
-  *chart_out = makeLineChart(panel, rx_color, tx_color, rx_series, tx_series);
+  *chart_out = makeLineChart(panel, rx_color, tx_color, rx_series, tx_series, ctx);
   lv_obj_align(*chart_out, LV_ALIGN_RIGHT_MID, 0, 8);
   return panel;
 }
@@ -448,12 +448,12 @@ void DashboardUi::build()
 
   eth0_panel = makeEthPanel(main_root, "eth0", theme->eth0_rx, theme->eth0_tx,
                                       &eth0_rx_label, &eth0_tx_label, &eth0_sum_label, &eth0_scale_label,
-                                      &eth0_chart, &eth0_rx_series, &eth0_tx_series);
+                                      &eth0_chart, &eth0_rx_series, &eth0_tx_series, &eth0_ctx);
   lv_obj_align(eth0_panel, LV_ALIGN_TOP_MID, 0, 34);
 
   eth1_panel = makeEthPanel(main_root, "eth1", theme->eth1_rx, theme->eth1_tx,
                                       &eth1_rx_label, &eth1_tx_label, &eth1_sum_label, &eth1_scale_label,
-                                      &eth1_chart, &eth1_rx_series, &eth1_tx_series);
+                                      &eth1_chart, &eth1_rx_series, &eth1_tx_series, &eth1_ctx);
   lv_obj_align(eth1_panel, LV_ALIGN_TOP_MID, 0, 186);
 
   cpu_panel = lv_obj_create(main_root);
@@ -527,15 +527,6 @@ void DashboardUi::updateClock()
   char buf[20];
   strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &timeinfo);
   lv_label_set_text(clock_label, buf);
-  applyTheme(timeinfo.tm_hour >= 7 && timeinfo.tm_hour < 19);
-}
-
-void DashboardUi::updateThemeFromClock()
-{
-  struct tm timeinfo;
-  if (getLocalTime(&timeinfo, 5)) {
-    applyTheme(timeinfo.tm_hour >= 7 && timeinfo.tm_hour < 19);
-  }
 }
 
 void DashboardUi::updateNetworkIdentity()
@@ -606,8 +597,16 @@ void DashboardUi::updateStats(const Stats &stats)
   float eth1_max = autoChartMax(eth1_rx_window, eth1_tx_window);
   updateChartScale(eth0_chart, eth0_scale_label, eth0_max);
   updateChartScale(eth1_chart, eth1_scale_label, eth1_max);
+  eth0_ctx.chart_max = eth0_max;
+  eth1_ctx.chart_max = eth1_max;
   redrawChart(eth0_chart, eth0_rx_series, eth0_tx_series, eth0_rx_window, eth0_tx_window, eth0_max);
   redrawChart(eth1_chart, eth1_rx_series, eth1_tx_series, eth1_rx_window, eth1_tx_window, eth1_max);
+
+  // Dynamic color: faster speed → redder (labels only, chart lines stay fixed)
+  lv_obj_set_style_text_color(eth0_rx_label, speedColor(stats.eth0_rx), 0);
+  lv_obj_set_style_text_color(eth0_tx_label, speedColor(stats.eth0_tx), 0);
+  lv_obj_set_style_text_color(eth1_rx_label, speedColor(stats.eth1_rx), 0);
+  lv_obj_set_style_text_color(eth1_tx_label, speedColor(stats.eth1_tx), 0);
 
   for (int i = 0; i < 4; i++) {
     lv_label_set_text_fmt(core_label[i], "C%d\n%d%%", i, stats.cores[i]);

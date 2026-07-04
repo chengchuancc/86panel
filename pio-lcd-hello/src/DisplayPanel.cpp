@@ -46,7 +46,7 @@ static void enablePanelPower()
 {
   Wire.begin(I2C_SDA, I2C_SCL);
   // Keep the V4.0 onboard controller in the same output state as Waveshare's examples.
-  writeExpander(0x02, 0xff);
+  writeExpander(0x02, 0xdf); // bit5=0 to keep buzzer (EXIO5/BEE_EN) off
   writeExpander(0x03, EXPANDER_CONFIG_ON);
   delay(120);
 }
